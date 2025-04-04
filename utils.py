@@ -5,22 +5,26 @@ import numpy as np
 
 def extract_walls(image):
     """
-    Extract wall-like structures from the SLAM map.
+    Enhanced wall extraction with preprocessing to connect fragmented structures.
     """
-    # Invert image
+    # Invert image: walls = white, free space = black
     inverted = cv2.bitwise_not(image)
 
-    # Threshold to create binary image
-    _, binary = cv2.threshold(inverted, 200, 255, cv2.THRESH_BINARY)
+    # Threshold to keep only high-contrast wall areas
+    _, binary = cv2.threshold(inverted, 220, 255, cv2.THRESH_BINARY)
 
-    # Denoise with morphological operations
-    kernel = np.ones((3, 3), np.uint8)
-    cleaned = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel, iterations=1)
+    # Morphological closing to connect nearby wall fragments
+    kernel = np.ones((5, 5), np.uint8)
+    closed = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel, iterations=2)
 
-    # Detect edges
-    edges = cv2.Canny(cleaned, 50, 150)
+    # Blurring for noise
+    blurred = cv2.GaussianBlur(closed, (5, 5), 0)
 
-    return cleaned, edges
+    # Edge detection
+    edges = cv2.Canny(blurred, 50, 150)
+
+    return closed, edges
+
 
 def save_image(image, path):
     cv2.imwrite(path, image)
