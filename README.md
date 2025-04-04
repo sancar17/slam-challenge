@@ -12,7 +12,7 @@ This project performs post-processing on SLAM-generated `.pgm` occupancy grid ma
 │ ├── room1.pgm 
 │ ├── room1.yaml 
 │ ├── ... # Input rooms 
-| └── outputs/ # Folder containing the visuals of each processing step and final outcome of 3 rooms
+│ └── outputs/ # Folder containing the visuals of each processing step and final outcome of 3 rooms
 ├── configs.py # Room-specific processing parameters 
 ├── main.py # Main processing pipeline 
 ├── utils.py # Utility functions 
