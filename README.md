@@ -6,6 +6,7 @@ This project performs post-processing on SLAM-generated `.pgm` occupancy grid ma
 
 ## Project Structure
 
+```bash
 . 
 ├── data/ 
 │ ├── room1.pgm 
@@ -16,7 +17,8 @@ This project performs post-processing on SLAM-generated `.pgm` occupancy grid ma
 ├── main.py # Main processing pipeline 
 ├── utils.py # Utility functions 
 ├── requirements.txt # All dependencies 
-└── README.md # This file
+└── README.md
+```
 
 ## How to Run
 
