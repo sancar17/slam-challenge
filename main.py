@@ -8,6 +8,9 @@ from utils import (
     extract_wall_contours,
     polygonize_contours,
     save_image,
+    connect_line_endpoints,
+    snap_line_endpoints,
+    extract_wall_segments_as_lines
 )
 
 DATA_DIR = "./data"
@@ -32,17 +35,31 @@ for filename in os.listdir(DATA_DIR):
 
         # === 3. Extract raw and filtered contours
         raw_contours = extract_wall_contours(cleaned_binary, min_area=0)          # all
-        filtered_contours = extract_wall_contours(cleaned_binary, min_area=500)   # walls only
+        filtered_contours = extract_wall_contours(cleaned_binary, min_area=200)   # walls only
 
         # === 4. Straight line detection (Hough)
         lines = detect_lines(edges)
-        line_image = draw_lines(edges.shape, lines)
+        line_image = connect_line_endpoints(lines, edges.shape, max_distance=10)
+
 
         # === 5. Polygonal wall simplification
-        polygonal_walls = polygonize_contours(filtered_contours)
+        
+        polygonal_walls = extract_wall_segments_as_lines(filtered_contours)
+        polygonal_walls = snap_line_endpoints(polygonal_walls)
+
 
         # === 6. Combine everything (polygon walls + straight lines)
-        combined = cv2.bitwise_or(polygonal_walls, cv2.cvtColor(line_image, cv2.COLOR_BGR2GRAY))
+        # Convert line image to grayscale if needed
+        line_gray = cv2.cvtColor(line_image, cv2.COLOR_BGR2GRAY) if line_image.ndim == 3 else line_image
+        poly_gray = cv2.cvtColor(polygonal_walls, cv2.COLOR_BGR2GRAY) if polygonal_walls.ndim == 3 else polygonal_walls
+
+        # Ensure size match (optional safety check)
+        if line_gray.shape != poly_gray.shape:
+            line_gray = cv2.resize(line_gray, (poly_gray.shape[1], poly_gray.shape[0]))
+
+        # Combine safely
+        combined = cv2.bitwise_or(poly_gray, line_gray)
+
 
         # === 7. Save all outputs
         save_image(image, os.path.join(room_output_dir, "1_original.png"))

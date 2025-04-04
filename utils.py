@@ -43,11 +43,11 @@ def draw_lines(image_shape, lines, color=(255, 255, 255), thickness=2):
     """
     Draw lines on a blank canvas.
     """
-    line_image = np.zeros((image_shape[0], image_shape[1], 3), dtype=np.uint8)
+    line_image = np.zeros(binary_image.shape, dtype=np.uint8)
     if lines is not None:
         for line in lines:
             x1, y1, x2, y2 = line[0]
-            cv2.line(line_image, (x1, y1), (x2, y2), color, thickness)
+            cv2.line(line_image, pt1, pt2, 255, thickness=2)
     return line_image
 
 def extract_wall_contours(binary_image, min_area=500):
@@ -62,6 +62,89 @@ def extract_wall_contours(binary_image, min_area=500):
         if cv2.contourArea(contour) > min_area:
             cv2.drawContours(contour_img, [contour], -1, 255, thickness=cv2.FILLED)
     return contour_img
+
+def extract_wall_segments_as_lines(binary_image, min_area=500, epsilon_factor=0.01):
+    """
+    Converts wall blobs into individual, unconnected line segments (no closed polygons).
+    """
+    contours, _ = cv2.findContours(binary_image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    line_img = np.zeros(binary_image.shape, dtype=np.uint8)
+
+    for cnt in contours:
+        if cv2.contourArea(cnt) > min_area:
+            epsilon = epsilon_factor * cv2.arcLength(cnt, True)
+            approx = cv2.approxPolyDP(cnt, epsilon, False)  # <-- not closed
+
+            for i in range(len(approx) - 1):  # don't wrap around
+                pt1 = tuple(approx[i][0])
+                pt2 = tuple(approx[i + 1][0])
+                cv2.line(line_img, pt1, pt2, 255, thickness=2)
+
+    return line_img
+
+
+def snap_line_endpoints(line_img, max_distance=10):
+    """
+    Find disconnected line ends and connect them if close.
+    """
+    # Convert to grayscale + find edges
+    gray = line_img
+    edges = cv2.Canny(gray, 50, 150)
+
+    # Find contours of the drawn lines
+    contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    # Collect all line endpoints
+    endpoints = []
+    for cnt in contours:
+        cnt = cnt.squeeze()
+        if len(cnt.shape) == 2 and len(cnt) > 1:
+            endpoints.append(tuple(cnt[0]))         # start
+            endpoints.append(tuple(cnt[-1]))        # end
+
+    # Connect endpoints that are close together
+    for i, pt1 in enumerate(endpoints):
+        for j, pt2 in enumerate(endpoints):
+            if i != j:
+                dist = np.linalg.norm(np.array(pt1) - np.array(pt2))
+                if dist < max_distance:
+                    cv2.line(line_img, pt1, pt2, (255, 255, 255), thickness=2)
+
+    return line_img
+
+    
+def connect_line_endpoints(lines, image_shape, max_distance=100):
+    """
+    Connects line endpoints that are close to each other.
+    """
+    if lines is None:
+        return np.zeros((image_shape[0], image_shape[1], 3), dtype=np.uint8)
+
+    # Extract endpoints
+    endpoints = []
+    for line in lines:
+        x1, y1, x2, y2 = line[0]
+        endpoints.extend([(x1, y1), (x2, y2)])
+
+    # Create a copy of the canvas to draw
+    canvas = np.zeros((image_shape[0], image_shape[1], 3), dtype=np.uint8)
+
+    # Redraw original lines
+    for line in lines:
+        x1, y1, x2, y2 = line[0]
+        cv2.line(canvas, (x1, y1), (x2, y2), (255, 255, 255), 2)
+
+    # Connect nearby endpoints
+    for i in range(len(endpoints)):
+        for j in range(i + 1, len(endpoints)):
+            pt1 = endpoints[i]
+            pt2 = endpoints[j]
+            distance = np.linalg.norm(np.array(pt1) - np.array(pt2))
+            if distance < max_distance:
+                cv2.line(canvas, pt1, pt2, (255, 255, 255), 2)
+
+    return canvas
+
 
 def polygonize_contours(binary_image, min_area=500, epsilon_factor=0.01):
     """
