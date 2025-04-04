@@ -57,14 +57,14 @@ Processed outputs for each room will be saved to ./data/outputs/<room_name>/ inc
 
 This is the main pipeline:
 
-Loads SLAM map and YAML metadata
-Extracts wall structures (binary + edges)
-Filters and simplifies contours
-Detects Hough lines and connects endpoints
-Combines straight and polygonal wall approximations
-Extracts outer wall outline for refinement
-Stylizes the result using specified background and line color
-Saves all outputs
+- Loads SLAM map and YAML metadata
+- Extracts wall structures (binary + edges)
+- Filters and simplifies contours
+- Detects Hough lines and connects endpoints
+- Combines straight and polygonal wall approximations
+- Extracts outer wall outline for refinement
+- Stylizes the result using specified background and line color
+- Saves all outputs
 
 ### configs.py
 
