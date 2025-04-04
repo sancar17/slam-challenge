@@ -9,11 +9,18 @@ from utils import (
     extract_wall_segments_as_lines,
     connect_intersecting_lines,
     save_image,
-    connect_line_endpoints
+    connect_line_endpoints,
+    extract_outer_wall_outline
 )
 from configs import ROOM_CONFIGS
+import numpy as np
+
+# Colors
+BG_COLOR = (49, 40, 32)     # #212831 background
+LINE_COLOR = (96, 93, 91)   # #5B5D60 line color
 
 DATA_DIR = "./data"
+OUTPUT_DIR = "./data/outputs"
 
 for filename in os.listdir(DATA_DIR):
     if filename.endswith(".pgm"):
@@ -52,11 +59,8 @@ for filename in os.listdir(DATA_DIR):
                                                 min_intersection_dist=params["min_intersection_dist"],
                                                 extend_length=params["extend_length"])
 
-
-
         # === 5. Polygonal wall simplification as straight lines
         polygonal_walls = extract_wall_segments_as_lines(filtered_contours)
-        #polygonal_walls = connect_intersecting_lines(lines=None, lines_img=polygonal_walls, min_intersection_dist=params["min_intersection_dist"], extend_length=params["extend_length"])
 
         # === 6. Combine everything (polygon walls + straight lines)
         # Ensure both images are grayscale and same size
@@ -66,11 +70,11 @@ for filename in os.listdir(DATA_DIR):
         if line_gray.shape != poly_gray.shape:
             line_gray = cv2.resize(line_gray, (poly_gray.shape[1], poly_gray.shape[0]))
 
-        # Combine safely
+        # Combine
         combined = cv2.bitwise_or(poly_gray, line_gray)
 
-        # === 7. Save all outputs
-        room_output_dir = os.path.join(DATA_DIR, base)
+        # === 7. Save intermediate outputs
+        room_output_dir = os.path.join(OUTPUT_DIR, base)
         os.makedirs(room_output_dir, exist_ok=True)
 
         save_image(image, os.path.join(room_output_dir, "1_original.png"))
@@ -79,11 +83,21 @@ for filename in os.listdir(DATA_DIR):
         save_image(raw_contours, os.path.join(room_output_dir, "4_contours.png"))
         save_image(filtered_contours, os.path.join(room_output_dir, "5_contours_filtered.png"))
         save_image(polygonal_walls, os.path.join(room_output_dir, "6_polygonal_walls.png"))
-        save_image(line_image_raw, os.path.join(room_output_dir, "6b_lines_raw.png"))
-        save_image(line_image, os.path.join(room_output_dir, "7_lines_connected.png"))
-        # Ensure combined is binary: all non-zero pixels become 255 (white)
-        _, combined = cv2.threshold(combined, 1, 255, cv2.THRESH_BINARY)
+        save_image(line_image_raw, os.path.join(room_output_dir, "7a_lines_raw.png"))
+        save_image(line_image, os.path.join(room_output_dir, "7b_lines_connected.png"))
 
+        _, combined = cv2.threshold(combined, 1, 255, cv2.THRESH_BINARY)
         save_image(combined, os.path.join(room_output_dir, "8_combined_walls.png"))
+
+        # === 8. Style and visualize final result
+        styled = np.full((*combined.shape, 3), BG_COLOR, dtype=np.uint8)
+
+        # Draw outer wall outline
+        outer_wall = extract_outer_wall_outline(combined, params["morph_param"], params["morph_iter"])
+        contours, _ = cv2.findContours(outer_wall, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        cv2.drawContours(styled, contours, -1, LINE_COLOR, thickness=3)
+
+        # Save styled output and binary export
+        save_image(styled, os.path.join(room_output_dir, "9_output.png"))
 
         print(f"Saved processed images in {room_output_dir}")

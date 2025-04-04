@@ -1,33 +1,7 @@
+import numpy as np
+import cv2
+from shapely.geometry import LineString, Point
 import yaml
-import cv2
-import numpy as np
-from shapely.geometry import LineString, Point
-
-def extend_line(pt1, pt2, length=50):
-    """
-    Extend a line segment beyond both ends.
-    """
-    vec = np.array(pt2) - np.array(pt1)
-    norm = np.linalg.norm(vec)
-    if norm == 0:
-        return pt1, pt2
-
-    unit = vec / norm
-    extended_pt1 = tuple((np.array(pt1) - unit * length).astype(int))
-    extended_pt2 = tuple((np.array(pt2) + unit * length).astype(int))
-    return extended_pt1, extended_pt2
-
-import numpy as np
-import cv2
-from shapely.geometry import LineString, Point
-
-import numpy as np
-import cv2
-from shapely.geometry import LineString
-
-import numpy as np
-import cv2
-from shapely.geometry import LineString, Point
 
 def extend_line(pt1, pt2, length=50):
     """
@@ -102,8 +76,6 @@ def connect_intersecting_lines(lines, lines_img, min_intersection_dist=20, exten
 
     return result
 
-
-
 def extract_walls(image):
     inverted = cv2.bitwise_not(image)
     _, binary = cv2.threshold(inverted, 220, 255, cv2.THRESH_BINARY)
@@ -173,8 +145,6 @@ def connect_line_endpoints(lines, image_shape, max_distance=100):
 
     return canvas
 
-
-
 def save_image(image, path):
     cv2.imwrite(path, image)
 
@@ -194,3 +164,28 @@ def draw_lines(image_shape, lines, color=(255, 255, 255), thickness=2):
             x1, y1, x2, y2 = line[0]
             cv2.line(line_image, pt1, pt2, 255, thickness=2)
     return line_image
+
+def extract_outer_wall_outline(binary_image, s, i, epsilon_factor=0.02):
+    """
+    Cleans and extracts a simplified outer wall contour from a binary mask.
+    - Fills small gaps to ensure closed shape
+    - Simplifies long wall lines
+    """
+    # Step 1: Morphological close to fill small gaps
+    closed = cv2.morphologyEx(binary_image, cv2.MORPH_CLOSE, np.ones((s, s), np.uint8), iterations=i)
+
+    # Step 2: Find largest external contour
+    contours, _ = cv2.findContours(binary_image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        return np.zeros_like(binary_image)
+
+    largest = max(contours, key=cv2.contourArea)
+    epsilon = epsilon_factor * cv2.arcLength(largest, True)
+    approx = cv2.approxPolyDP(largest, epsilon, True)
+
+    # Step 3: Draw simplified outline
+    outline = np.zeros_like(binary_image)
+    cv2.drawContours(outline, [approx], -1, 255, thickness=2)
+
+    return closed
+
