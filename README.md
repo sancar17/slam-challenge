@@ -92,4 +92,5 @@ Possible future improvements:
 - Door detection from structural wall gaps or shape priors
 - Interior wall classification vs outer wall segmentation
 - Furniture detection from isolated blobs or layout rules
+- Better final visualization of outer and inner walls, doors, furnitures
 - Learning-based refinement using annotated floor plan datasets
