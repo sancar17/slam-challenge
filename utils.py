@@ -1,34 +1,68 @@
 import yaml
 import cv2
-import matplotlib.pyplot as plt
 import numpy as np
+from shapely.geometry import LineString
+
+def extend_line(pt1, pt2, length=50):
+    """
+    Extend a line segment beyond both ends.
+    """
+    vec = np.array(pt2) - np.array(pt1)
+    norm = np.linalg.norm(vec)
+    if norm == 0:
+        return pt1, pt2
+
+    unit = vec / norm
+    extended_pt1 = tuple((np.array(pt1) - unit * length).astype(int))
+    extended_pt2 = tuple((np.array(pt2) + unit * length).astype(int))
+    return extended_pt1, extended_pt2
+
+def connect_intersecting_lines(lines_img, min_intersection_dist=20, extend_length=30):
+    """
+    Detect endpoints that are near intersection, and connect them.
+    """
+    # Detect original lines
+    edges = cv2.Canny(lines_img, 50, 150)
+    lines = cv2.HoughLinesP(edges, 1, np.pi / 180, threshold=50, minLineLength=20, maxLineGap=10)
+    if lines is None:
+        return lines_img
+
+    extended_lines = []
+    for line in lines:
+        x1, y1, x2, y2 = line[0]
+        pt1, pt2 = extend_line((x1, y1), (x2, y2), length=extend_length)
+        extended_lines.append((pt1, pt2))
+
+    intersections = []
+    for i in range(len(extended_lines)):
+        for j in range(i + 1, len(extended_lines)):
+            l1 = LineString(extended_lines[i])
+            l2 = LineString(extended_lines[j])
+            if l1.intersects(l2):
+                p = l1.intersection(l2)
+                if p.geom_type == 'Point':
+                    intersections.append((int(p.x), int(p.y)))
+
+    result = lines_img.copy()
+    for line in lines:
+        x1, y1, x2, y2 = line[0]
+        for inter in intersections:
+            for pt in [(x1, y1), (x2, y2)]:
+                if np.linalg.norm(np.array(pt) - np.array(inter)) < min_intersection_dist:
+                    cv2.line(result, pt, inter, 255, thickness=2)
+
+    return result
 
 def extract_walls(image):
-    """
-    Enhanced wall extraction with preprocessing to connect fragmented structures.
-    """
-    # Invert image: walls = white, free space = black
     inverted = cv2.bitwise_not(image)
-
-    # Threshold to keep only high-contrast wall areas
     _, binary = cv2.threshold(inverted, 220, 255, cv2.THRESH_BINARY)
-
-    # Morphological closing to connect nearby wall fragments
     kernel = np.ones((5, 5), np.uint8)
     closed = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel, iterations=2)
-
-    # Blurring for noise
     blurred = cv2.GaussianBlur(closed, (5, 5), 0)
-
-    # Edge detection
     edges = cv2.Canny(blurred, 50, 150)
-
     return closed, edges
 
-def detect_lines(edge_image, min_line_length=50, max_line_gap=10):
-    """
-    Detect straight lines using the Probabilistic Hough Transform.
-    """
+def detect_lines(edge_image, min_line_length=5, max_line_gap=150):
     lines = cv2.HoughLinesP(
         edge_image,
         rho=1,
@@ -39,151 +73,32 @@ def detect_lines(edge_image, min_line_length=50, max_line_gap=10):
     )
     return lines
 
-def draw_lines(image_shape, lines, color=(255, 255, 255), thickness=2):
-    """
-    Draw lines on a blank canvas.
-    """
-    line_image = np.zeros(binary_image.shape, dtype=np.uint8)
-    if lines is not None:
-        for line in lines:
-            x1, y1, x2, y2 = line[0]
-            cv2.line(line_image, pt1, pt2, 255, thickness=2)
-    return line_image
-
 def extract_wall_contours(binary_image, min_area=500):
-    """
-    Find large contours (wall-like blobs) in the binary mask.
-    """
-    contours, _ = cv2.findContours(
-        binary_image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
-    )
+    contours, _ = cv2.findContours(binary_image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     contour_img = np.zeros_like(binary_image)
     for contour in contours:
         if cv2.contourArea(contour) > min_area:
             cv2.drawContours(contour_img, [contour], -1, 255, thickness=cv2.FILLED)
     return contour_img
 
-def extract_wall_segments_as_lines(binary_image, min_area=500, epsilon_factor=0.01):
-    """
-    Converts wall blobs into individual, unconnected line segments (no closed polygons).
-    """
+def extract_wall_segments_as_lines(binary_image, min_area=100, epsilon_factor=0.01):
     contours, _ = cv2.findContours(binary_image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     line_img = np.zeros(binary_image.shape, dtype=np.uint8)
-
     for cnt in contours:
         if cv2.contourArea(cnt) > min_area:
             epsilon = epsilon_factor * cv2.arcLength(cnt, True)
-            approx = cv2.approxPolyDP(cnt, epsilon, False)  # <-- not closed
-
-            for i in range(len(approx) - 1):  # don't wrap around
+            approx = cv2.approxPolyDP(cnt, epsilon, False)
+            for i in range(len(approx) - 1):
                 pt1 = tuple(approx[i][0])
                 pt2 = tuple(approx[i + 1][0])
                 cv2.line(line_img, pt1, pt2, 255, thickness=2)
-
     return line_img
-
-
-def snap_line_endpoints(line_img, max_distance=10):
-    """
-    Find disconnected line ends and connect them if close.
-    """
-    # Convert to grayscale + find edges
-    gray = line_img
-    edges = cv2.Canny(gray, 50, 150)
-
-    # Find contours of the drawn lines
-    contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-    # Collect all line endpoints
-    endpoints = []
-    for cnt in contours:
-        cnt = cnt.squeeze()
-        if len(cnt.shape) == 2 and len(cnt) > 1:
-            endpoints.append(tuple(cnt[0]))         # start
-            endpoints.append(tuple(cnt[-1]))        # end
-
-    # Connect endpoints that are close together
-    for i, pt1 in enumerate(endpoints):
-        for j, pt2 in enumerate(endpoints):
-            if i != j:
-                dist = np.linalg.norm(np.array(pt1) - np.array(pt2))
-                if dist < max_distance:
-                    cv2.line(line_img, pt1, pt2, (255, 255, 255), thickness=2)
-
-    return line_img
-
-    
-def connect_line_endpoints(lines, image_shape, max_distance=100):
-    """
-    Connects line endpoints that are close to each other.
-    """
-    if lines is None:
-        return np.zeros((image_shape[0], image_shape[1], 3), dtype=np.uint8)
-
-    # Extract endpoints
-    endpoints = []
-    for line in lines:
-        x1, y1, x2, y2 = line[0]
-        endpoints.extend([(x1, y1), (x2, y2)])
-
-    # Create a copy of the canvas to draw
-    canvas = np.zeros((image_shape[0], image_shape[1], 3), dtype=np.uint8)
-
-    # Redraw original lines
-    for line in lines:
-        x1, y1, x2, y2 = line[0]
-        cv2.line(canvas, (x1, y1), (x2, y2), (255, 255, 255), 2)
-
-    # Connect nearby endpoints
-    for i in range(len(endpoints)):
-        for j in range(i + 1, len(endpoints)):
-            pt1 = endpoints[i]
-            pt2 = endpoints[j]
-            distance = np.linalg.norm(np.array(pt1) - np.array(pt2))
-            if distance < max_distance:
-                cv2.line(canvas, pt1, pt2, (255, 255, 255), 2)
-
-    return canvas
-
-
-def polygonize_contours(binary_image, min_area=500, epsilon_factor=0.01):
-    """
-    Approximate wall contours as polygons (connected straight segments).
-    """
-    contours, _ = cv2.findContours(
-        binary_image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
-    )
-    polygon_img = np.zeros_like(binary_image)
-
-    for cnt in contours:
-        if cv2.contourArea(cnt) > min_area:
-            epsilon = epsilon_factor * cv2.arcLength(cnt, True)
-            approx = cv2.approxPolyDP(cnt, epsilon, True)
-
-            # Draw polygon with filled straight segments
-            cv2.polylines(polygon_img, [approx], isClosed=True, color=255, thickness=2)
-            cv2.fillPoly(polygon_img, [approx], 255)
-
-    return polygon_img
-
-
 
 def save_image(image, path):
     cv2.imwrite(path, image)
 
-
-def show_image(image, title="Image"):
-    plt.imshow(image, cmap='gray')
-    plt.title(title)
-    plt.axis("off")
-    plt.show()
-
 def load_map_and_metadata(pgm_path, yaml_path):
-    # Load PGM image
     image = cv2.imread(pgm_path, cv2.IMREAD_GRAYSCALE)
-
-    # Load YAML metadata
     with open(yaml_path, 'r') as f:
         metadata = yaml.safe_load(f)
-
     return image, metadata

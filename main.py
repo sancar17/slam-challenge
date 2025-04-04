@@ -6,12 +6,11 @@ from utils import (
     detect_lines,
     draw_lines,
     extract_wall_contours,
-    polygonize_contours,
+    extract_wall_segments_as_lines,
+    connect_intersecting_lines,
     save_image,
-    connect_line_endpoints,
-    snap_line_endpoints,
-    extract_wall_segments_as_lines
 )
+from configs import ROOM_CONFIGS
 
 DATA_DIR = "./data"
 
@@ -19,13 +18,12 @@ for filename in os.listdir(DATA_DIR):
     if filename.endswith(".pgm"):
         base = os.path.splitext(filename)[0]
         pgm_path = os.path.join(DATA_DIR, filename)
-        yaml_path = os.path.join(DATA_DIR, f"room1.yaml")
+        yaml_path = os.path.join(DATA_DIR, f"{base}.yaml")
+        
+        # Get room-specific parameters from the configuration
+        params = ROOM_CONFIGS.get(base, ROOM_CONFIGS['room1'])
 
         print(f"Processing {filename}...")
-
-        # Create output folder
-        room_output_dir = os.path.join(DATA_DIR, base)
-        os.makedirs(room_output_dir, exist_ok=True)
 
         # === 1. Load image and metadata
         image, metadata = load_map_and_metadata(pgm_path, yaml_path)
@@ -34,34 +32,32 @@ for filename in os.listdir(DATA_DIR):
         cleaned_binary, edges = extract_walls(image)
 
         # === 3. Extract raw and filtered contours
-        raw_contours = extract_wall_contours(cleaned_binary, min_area=0)          # all
-        filtered_contours = extract_wall_contours(cleaned_binary, min_area=200)   # walls only
+        raw_contours = extract_wall_contours(cleaned_binary, min_area=0)  # all
+        filtered_contours = extract_wall_contours(cleaned_binary, min_area=params["min_area"])  # walls only
 
-        # === 4. Straight line detection (Hough)
-        lines = detect_lines(edges)
-        line_image = connect_line_endpoints(lines, edges.shape, max_distance=10)
+        # === 4. Detect lines (Hough)
+        lines = detect_lines(edges, min_line_length=params["min_line_length"], max_line_gap=params["max_line_gap"])
+        line_image = connect_intersecting_lines(lines, edges.shape, max_distance=params["max_distance"])
 
-
-        # === 5. Polygonal wall simplification
-        
+        # === 5. Polygonal wall simplification as straight lines
         polygonal_walls = extract_wall_segments_as_lines(filtered_contours)
-        polygonal_walls = snap_line_endpoints(polygonal_walls)
-
+        polygonal_walls = connect_intersecting_lines(polygonal_walls, min_intersection_dist=params["min_intersection_dist"], extend_length=params["extend_length"])
 
         # === 6. Combine everything (polygon walls + straight lines)
-        # Convert line image to grayscale if needed
+        # Ensure both images are grayscale and same size
         line_gray = cv2.cvtColor(line_image, cv2.COLOR_BGR2GRAY) if line_image.ndim == 3 else line_image
         poly_gray = cv2.cvtColor(polygonal_walls, cv2.COLOR_BGR2GRAY) if polygonal_walls.ndim == 3 else polygonal_walls
 
-        # Ensure size match (optional safety check)
         if line_gray.shape != poly_gray.shape:
             line_gray = cv2.resize(line_gray, (poly_gray.shape[1], poly_gray.shape[0]))
 
         # Combine safely
         combined = cv2.bitwise_or(poly_gray, line_gray)
 
-
         # === 7. Save all outputs
+        room_output_dir = os.path.join(DATA_DIR, base)
+        os.makedirs(room_output_dir, exist_ok=True)
+
         save_image(image, os.path.join(room_output_dir, "1_original.png"))
         save_image(cleaned_binary, os.path.join(room_output_dir, "2_binary.png"))
         save_image(edges, os.path.join(room_output_dir, "3_edges.png"))

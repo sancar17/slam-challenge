@@ -3,3 +3,4 @@ numpy
 matplotlib
 PyYAML
 scikit-image
+shapely
