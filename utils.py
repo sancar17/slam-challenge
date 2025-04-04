@@ -1,7 +1,7 @@
 import yaml
 import cv2
 import numpy as np
-from shapely.geometry import LineString
+from shapely.geometry import LineString, Point
 
 def extend_line(pt1, pt2, length=50):
     """
@@ -17,41 +17,92 @@ def extend_line(pt1, pt2, length=50):
     extended_pt2 = tuple((np.array(pt2) + unit * length).astype(int))
     return extended_pt1, extended_pt2
 
-def connect_intersecting_lines(lines_img, min_intersection_dist=20, extend_length=30):
-    """
-    Detect endpoints that are near intersection, and connect them.
-    """
-    # Detect original lines
-    edges = cv2.Canny(lines_img, 50, 150)
-    lines = cv2.HoughLinesP(edges, 1, np.pi / 180, threshold=50, minLineLength=20, maxLineGap=10)
-    if lines is None:
-        return lines_img
+import numpy as np
+import cv2
+from shapely.geometry import LineString, Point
 
+import numpy as np
+import cv2
+from shapely.geometry import LineString
+
+import numpy as np
+import cv2
+from shapely.geometry import LineString, Point
+
+def extend_line(pt1, pt2, length=50):
+    """
+    Extend a line segment in both directions by 'length' while preserving direction.
+    """
+    pt1, pt2 = np.array(pt1), np.array(pt2)
+    vec = pt2 - pt1
+    norm = np.linalg.norm(vec)
+    if norm == 0:
+        return tuple(pt1), tuple(pt2)
+    unit_vec = vec / norm
+    ext_pt1 = tuple((pt1 - unit_vec * length).astype(int))
+    ext_pt2 = tuple((pt2 + unit_vec * length).astype(int))
+    return ext_pt1, ext_pt2
+
+def connect_intersecting_lines(lines, lines_img, min_intersection_dist=20, extend_length=30):
+    """
+    Extend Hough lines and connect:
+    - Endpoints to nearby intersection points
+    - Endpoints to nearby endpoints (gap closing)
+    Only connect isolated endpoints, i.e., those not already intersecting other lines.
+    """
+    result = lines_img.copy()
+
+    if lines is None:
+        edges = cv2.Canny(lines_img, 50, 150)
+        lines = cv2.HoughLinesP(edges, 1, np.pi / 180, threshold=50, minLineLength=20, maxLineGap=10)
+        if lines is None:
+            return result
+
+    # Convert lines to extended format
     extended_lines = []
+    endpoints = []
     for line in lines:
         x1, y1, x2, y2 = line[0]
-        pt1, pt2 = extend_line((x1, y1), (x2, y2), length=extend_length)
-        extended_lines.append((pt1, pt2))
+        pt1, pt2 = (x1, y1), (x2, y2)
+        ext_pt1, ext_pt2 = extend_line(pt1, pt2, length=extend_length)
+        extended_lines.append((ext_pt1, ext_pt2))
+        endpoints.extend([pt1, pt2])
 
+    # Prepare shapely segments for intersection & proximity testing
+    line_segments = [LineString([pt1, pt2]) for pt1, pt2 in extended_lines]
+
+    # Compute intersection points
     intersections = []
-    for i in range(len(extended_lines)):
-        for j in range(i + 1, len(extended_lines)):
-            l1 = LineString(extended_lines[i])
-            l2 = LineString(extended_lines[j])
-            if l1.intersects(l2):
-                p = l1.intersection(l2)
+    for i in range(len(line_segments)):
+        for j in range(i + 1, len(line_segments)):
+            if line_segments[i].intersects(line_segments[j]):
+                p = line_segments[i].intersection(line_segments[j])
                 if p.geom_type == 'Point':
                     intersections.append((int(p.x), int(p.y)))
 
-    result = lines_img.copy()
-    for line in lines:
-        x1, y1, x2, y2 = line[0]
+    # === Connect endpoints to intersection points (only isolated ones)
+    for (x1, y1, x2, y2) in lines[:, 0]:
         for inter in intersections:
+            inter_point = Point(inter)
             for pt in [(x1, y1), (x2, y2)]:
-                if np.linalg.norm(np.array(pt) - np.array(inter)) < min_intersection_dist:
+                pt_point = Point(pt)
+                # Skip if this pt is already close to any other wall
+                is_isolated = all(
+                    segment.distance(pt_point) > (min_intersection_dist / 2)
+                    for segment in line_segments
+                )
+                if is_isolated and pt_point.distance(inter_point) < min_intersection_dist:
                     cv2.line(result, pt, inter, 255, thickness=2)
 
+    # === Also connect nearby endpoints directly (gap closers)
+    for i, pt1 in enumerate(endpoints):
+        for j, pt2 in enumerate(endpoints):
+            if i < j and np.linalg.norm(np.array(pt1) - np.array(pt2)) < min_intersection_dist:
+                cv2.line(result, pt1, pt2, 255, thickness=2)
+
     return result
+
+
 
 def extract_walls(image):
     inverted = cv2.bitwise_not(image)
@@ -94,6 +145,36 @@ def extract_wall_segments_as_lines(binary_image, min_area=100, epsilon_factor=0.
                 cv2.line(line_img, pt1, pt2, 255, thickness=2)
     return line_img
 
+def connect_line_endpoints(lines, image_shape, max_distance=100):
+    """
+    Connects line endpoints that are close to each other.
+    """
+    if lines is None:
+        return np.zeros((image_shape[0], image_shape[1], 3), dtype=np.uint8)
+
+    # Collect all endpoints
+    endpoints = []
+    for line in lines:
+        x1, y1, x2, y2 = line[0]
+        endpoints.extend([(x1, y1), (x2, y2)])
+
+    # Create canvas and draw original lines
+    canvas = np.zeros((image_shape[0], image_shape[1], 3), dtype=np.uint8)
+    for x1, y1, x2, y2 in lines[:, 0]:
+        cv2.line(canvas, (x1, y1), (x2, y2), (255, 255, 255), 2)
+
+    # Connect nearby endpoints
+    for i in range(len(endpoints)):
+        for j in range(i + 1, len(endpoints)):
+            pt1 = endpoints[i]
+            pt2 = endpoints[j]
+            if np.linalg.norm(np.array(pt1) - np.array(pt2)) < max_distance:
+                cv2.line(canvas, pt1, pt2, (255, 255, 255), 2)
+
+    return canvas
+
+
+
 def save_image(image, path):
     cv2.imwrite(path, image)
 
@@ -102,3 +183,14 @@ def load_map_and_metadata(pgm_path, yaml_path):
     with open(yaml_path, 'r') as f:
         metadata = yaml.safe_load(f)
     return image, metadata
+
+def draw_lines(image_shape, lines, color=(255, 255, 255), thickness=2):
+    """
+    Draw lines on a blank canvas.
+    """
+    line_image = np.zeros(binary_image.shape, dtype=np.uint8)
+    if lines is not None:
+        for line in lines:
+            x1, y1, x2, y2 = line[0]
+            cv2.line(line_image, pt1, pt2, 255, thickness=2)
+    return line_image

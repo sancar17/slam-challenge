@@ -9,6 +9,7 @@ from utils import (
     extract_wall_segments_as_lines,
     connect_intersecting_lines,
     save_image,
+    connect_line_endpoints
 )
 from configs import ROOM_CONFIGS
 
@@ -18,10 +19,10 @@ for filename in os.listdir(DATA_DIR):
     if filename.endswith(".pgm"):
         base = os.path.splitext(filename)[0]
         pgm_path = os.path.join(DATA_DIR, filename)
-        yaml_path = os.path.join(DATA_DIR, f"{base}.yaml")
+        yaml_path = os.path.join(DATA_DIR, f"room1.yaml")
         
         # Get room-specific parameters from the configuration
-        params = ROOM_CONFIGS.get(base, ROOM_CONFIGS['room1'])
+        params = ROOM_CONFIGS.get(base, ROOM_CONFIGS[base])
 
         print(f"Processing {filename}...")
 
@@ -29,19 +30,33 @@ for filename in os.listdir(DATA_DIR):
         image, metadata = load_map_and_metadata(pgm_path, yaml_path)
 
         # === 2. Wall extraction (binary and edge)
-        cleaned_binary, edges = extract_walls(image)
+        cleaned_binary, _ = extract_walls(image)
 
         # === 3. Extract raw and filtered contours
-        raw_contours = extract_wall_contours(cleaned_binary, min_area=0)  # all
-        filtered_contours = extract_wall_contours(cleaned_binary, min_area=params["min_area"])  # walls only
+        raw_contours = extract_wall_contours(cleaned_binary, min_area=0)
+        filtered_contours = extract_wall_contours(cleaned_binary, min_area=params["min_area"])
+
+        # === 3.5 Recompute edges on filtered contours
+        edges = cv2.Canny(filtered_contours, 50, 150)
 
         # === 4. Detect lines (Hough)
         lines = detect_lines(edges, min_line_length=params["min_line_length"], max_line_gap=params["max_line_gap"])
-        line_image = connect_intersecting_lines(lines, edges.shape, max_distance=params["max_distance"])
+        # Draw raw Hough lines and connected endpoints
+        line_image = connect_line_endpoints(lines, edges.shape, max_distance=params["max_distance"])
+
+        # Save the raw version before connecting intersections
+        line_image_raw = line_image.copy()
+
+        # Connect extended intersections
+        line_image = connect_intersecting_lines(lines, line_image, 
+                                                min_intersection_dist=params["min_intersection_dist"],
+                                                extend_length=params["extend_length"])
+
+
 
         # === 5. Polygonal wall simplification as straight lines
         polygonal_walls = extract_wall_segments_as_lines(filtered_contours)
-        polygonal_walls = connect_intersecting_lines(polygonal_walls, min_intersection_dist=params["min_intersection_dist"], extend_length=params["extend_length"])
+        #polygonal_walls = connect_intersecting_lines(lines=None, lines_img=polygonal_walls, min_intersection_dist=params["min_intersection_dist"], extend_length=params["extend_length"])
 
         # === 6. Combine everything (polygon walls + straight lines)
         # Ensure both images are grayscale and same size
@@ -64,7 +79,11 @@ for filename in os.listdir(DATA_DIR):
         save_image(raw_contours, os.path.join(room_output_dir, "4_contours.png"))
         save_image(filtered_contours, os.path.join(room_output_dir, "5_contours_filtered.png"))
         save_image(polygonal_walls, os.path.join(room_output_dir, "6_polygonal_walls.png"))
-        save_image(line_image, os.path.join(room_output_dir, "7_lines.png"))
+        save_image(line_image_raw, os.path.join(room_output_dir, "6b_lines_raw.png"))
+        save_image(line_image, os.path.join(room_output_dir, "7_lines_connected.png"))
+        # Ensure combined is binary: all non-zero pixels become 255 (white)
+        _, combined = cv2.threshold(combined, 1, 255, cv2.THRESH_BINARY)
+
         save_image(combined, os.path.join(room_output_dir, "8_combined_walls.png"))
 
         print(f"Saved processed images in {room_output_dir}")
